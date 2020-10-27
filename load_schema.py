@@ -16,24 +16,43 @@ def extract_tables_schema(tables_schema, extracted_keys_list = ["@uuid", "name",
 	ite_func = extract_dict(extracted_keys_list)
 	return list(map(ite_func, tables_schema))
 
-def get_tables_relations(extracted_tables_schema):
+def get_columns_dict(db_schema):
+	"""Return a dictionary with @uuid as key and column name as value"""
+	all_table_columns = db_schema["all-table-columns"]
+	col_dict = {}
+	for col in all_table_columns:
+		col_dict[col["@uuid"]] = col["name"]
+	return col_dict
+
+def get_tables_relations(schema_file):
 	"""
 	Get relations between MySQL tables.
 	Result will be a dictionary which has uuids (of relation, defined by SchemaCrawler) as keys, and values including:
 	- source: Name of table which holds primary key of relation
 	- dest: Name of table which holds foreign key of relation
 	"""
+	db_schema = read_schema_file(schema_file)
+	tables_schema = get_tables_schema(db_schema)
+	extracted_tables_schema = extract_tables_schema(tables_schema)
+	col_dict = get_columns_dict(db_schema)
+
 	relations_dict = {}
 	for table in extracted_tables_schema:
 		for foreign_key in table["foreign-keys"]:
 			if(isinstance(foreign_key, dict)):
-				relations_dict[str(foreign_key["@uuid"])] = {}
-				relations_dict[str(foreign_key["@uuid"])]["source"] = table["name"]
-				relations_dict[str(foreign_key["@uuid"])]["dest"] = table["name"]
+				relation_uuid = foreign_key["@uuid"]
+				foreign_key_uuid = foreign_key["column-references"][0]["foreign-key-column"]
+				primary_key_uuid = foreign_key["column-references"][0]["primary-key-column"]
+				relations_dict[relation_uuid] = {}
+				relations_dict[relation_uuid]["source-table"] = table["name"]
+				relations_dict[relation_uuid]["dest-table"] = table["name"]
+				relations_dict[relation_uuid]["source-column"] = col_dict[primary_key_uuid]
+				relations_dict[relation_uuid]["dest-column"] = col_dict[foreign_key_uuid]
 	for table in extracted_tables_schema:
 		for foreign_key in table["foreign-keys"]:
 			if(isinstance(foreign_key, str)):
-				relations_dict[str(foreign_key)]["dest"] = table["name"]
+				relations_dict[str(foreign_key)]["dest-table"] = table["name"]
+	# print(relations_dict)
 	return relations_dict
 
 def get_tables_name_list(schema_file):
@@ -54,30 +73,38 @@ def specify_sequence_of_migrating_tables(schema_file):
 	db_schema = read_schema_file(schema_file)
 	tables_schema = get_tables_schema(db_schema)
 	extracted_tables_schema = extract_tables_schema(tables_schema)
-	tables_relations = get_tables_relations(extracted_tables_schema)
+	tables_relations = get_tables_relations(schema_file)
 	tables_name_list = get_tables_name_list(schema_file)
 
-	refering_tables_set = set(map(lambda ele: ele["dest"], tables_relations.values()))
+	refering_tables_set = set(map(lambda ele: ele["dest-table"], tables_relations.values()))
 	root_nodes = set(tables_name_list) - refering_tables_set
 
 	node_seq = dict.fromkeys(tables_name_list, -1)
 	node_seq.update(dict.fromkeys(root_nodes, 0))
 
 	# Eliminate self reference relation
-	tables_relations_list = list(filter(lambda rel: rel["source"] != rel["dest"], list(tables_relations.values())))
+	tables_relations_list = list(filter(lambda rel: rel["source-table"] != rel["dest-table"], list(tables_relations.values())))
 
 	current_mark = 0
 	while(current_mark <= max(node_seq.values())):
 		source_nodes = set(filter(lambda key: node_seq[str(key)] == current_mark, node_seq.keys()))
 		for source_node in source_nodes:
 			for direction in tables_relations_list:
-				if(direction["source"] == source_node):
-					if(node_seq[direction["dest"]] < current_mark + 1):
-						node_seq[direction["dest"]] = current_mark + 1
-					direction["source"] = None #TODO: Find a more effective way to eliminate retrieved nodes
+				if(direction["source-table"] == source_node):
+					if(node_seq[direction["dest-table"]] < current_mark + 1):
+						node_seq[direction["dest-table"]] = current_mark + 1
+					direction["source-table"] = None #TODO: Find a more effective way to eliminate retrieved nodes
 		current_mark = current_mark + 1
-	return node_seq
+
+	table_seq = {} 
+	for i in range(current_mark):
+		table_seq[str(i)] = []
+		for key in list(node_seq):
+			if node_seq[key] == i:
+				table_seq[str(i)] = table_seq[str(i)] + [key]
+	return table_seq 
+
 
 if __name__ == '__main__':
-	node_sequence = specify_sequence_of_migrating_tables('schema.json')
-	print(node_sequence)
+	table_sequence = specify_sequence_of_migrating_tables('schema.json')
+	print(table_sequence)

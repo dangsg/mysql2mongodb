@@ -1,18 +1,7 @@
 import json 
 import sys
-from pymongo import MongoClient  
 from load_schema import *
-
-def open_connection_mongodb(connection_info):
-	try:
-		# Making connection 
-		mongo_client = MongoClient(connection_info["connection_string"])  
-		# Select database  
-		db_connection = mongo_client[connection_info["database_name"]] 		
-		return db_connection
-	except Exception as e:
-		print("Error while connecting to MongoDB", e)
-		raise e
+from utilities import *
   
 def import_json_to_mongodb(db_connection, collection_name, json_filename):
 	try:		   
